@@ -5,6 +5,7 @@ hallucinates command output until it emits the next prompt."""
 import argparse
 import os
 import re
+import readline
 import socket
 import subprocess
 import sys
@@ -156,12 +157,13 @@ class StopOnPromptLike(StoppingCriteria):
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="LLM fake terminal")
-    ap.add_argument("--model", default="Qwen/Qwen2.5-0.5B",
+    ap.add_argument("model", nargs="?", default="Qwen/Qwen2.5-0.5B",
                     help="HF model id or local path (base/completion model, not chat-tuned)")
     ap.add_argument("--device", default="auto")
     ap.add_argument("--max-new-tokens", type=int, default=2048)
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--top-p", type=float, default=0.95)
+    ap.add_argument("--repetition-penalty", type=float, default=1.05)
     ap.add_argument("--context-chars", type=int, default=6000,
                     help="Max rolling buffer size in chars")
     ap.add_argument("--prompt", default=None,
@@ -185,13 +187,18 @@ def main() -> None:
     if tok.pad_token_id is None:
         tok.pad_token_id = tok.eos_token_id
 
+    # Seed readline history so arrow-up recalls previous commands.
+    history_cmds = read_history(args.history)
+    for cmd in history_cmds:
+        readline.add_history(cmd)
+
     tmux_seed = capture_tmux_pane(args.tmux_lines)
     buf = ""
     if tmux_seed:
         # Real transcript from the live pane — already has its own prompts and outputs.
         buf = tmux_seed.rstrip() + "\n"
     else:
-        for cmd in read_history(args.history):
+        for cmd in history_cmds:
             buf += prompt_tmpl + cmd + "\n"
     buf += prompt_tmpl
     # Display only the live prompt, not the seeded transcript.
@@ -227,6 +234,7 @@ def main() -> None:
             do_sample=True,
             temperature=args.temperature,
             top_p=args.top_p,
+            repetition_penalty=args.repetition_penalty,
             stopping_criteria=stopping,
             pad_token_id=tok.pad_token_id,
         )

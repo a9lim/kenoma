@@ -12,8 +12,8 @@ that only pretends to do anything.
 
 ## Layout
 
-- `fake_term.py` — single-file entry point. CLI, prompt capture, history/tmux seeding, REPL, streaming generation, stop logic.
-- `requirements.txt` — `torch`, `transformers>=4.44`, `accelerate`, `sentencepiece`.
+- `kenoma.py` — single-module entry point. CLI, prompt capture, history/tmux seeding, readline input, REPL, streaming generation, stop logic.
+- `pyproject.toml` — packaging. Declares `kenoma` console script (`kenoma = kenoma:main`) and deps: `torch`, `transformers>=4.44`, `accelerate`, `sentencepiece`.
 
 ## Design
 
@@ -38,7 +38,7 @@ before the REPL starts so the model has grounding:
 1. **`--tmux-lines N`** (default 300). If `$TMUX` is set, run
    `tmux capture-pane -p -J -S -N` to grab the current pane's scrollback —
    real commands and real outputs. We drop the last 3 rows of the capture
-   (the `python fake_term.py` line, the `[loading ...]` stderr line, the
+   (the `python kenoma.py` line, the `[loading ...]` stderr line, the
    live prompt) to avoid feeding the launch noise back to the model.
 2. **`--history N`** (default 20). Fallback if tmux capture is unavailable
    or empty. Reads `$HISTFILE` or `~/.zsh_history` / `~/.bash_history`,
@@ -136,6 +136,8 @@ captured prompt even if the model generated a slightly different one.
 ## Controls
 
 - **Enter** — submit command, model generates fake output.
+- **Up/Down arrows** — cycle through command history (readline).
+- **Left/Right arrows** — move cursor within the current line.
 - **Ctrl-C** at the input prompt — exit.
 - **Ctrl-D / EOF** — exit.
 
@@ -146,13 +148,17 @@ becomes worth it, wrap the streamer loop and signal the generation thread.
 ## Running
 
 ```
-pip install -r requirements.txt
-python fake_term.py --model google/gemma-3n-E4B
+pip install .
+kenoma google/gemma-3n-E4B
 ```
 
-Flags worth knowing: `--model`, `--prompt` (override captured PS1),
-`--temperature` (default 1.0), `--top-p`, `--max-new-tokens` (default 2048),
-`--context-chars`, `--history`, `--tmux-lines`, `--device`.
+Or `pip install -e .` for editable install during development. The model is a
+positional argument (defaults to `Qwen/Qwen2.5-0.5B` when omitted).
+
+Flags worth knowing: `--prompt` (override captured PS1), `--temperature`
+(default 1.0), `--top-p` (default 0.95), `--repetition-penalty` (default
+1.05), `--max-new-tokens` (default 2048), `--context-chars`, `--history`,
+`--tmux-lines`, `--device`.
 
 ## Non-goals
 
