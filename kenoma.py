@@ -10,6 +10,12 @@ import socket
 import subprocess
 import sys
 import threading
+from pathlib import Path
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:
+    tomllib = None
 
 import torch
 from transformers import (
@@ -20,6 +26,78 @@ from transformers import (
     TextIteratorStreamer,
 )
 
+
+# ---------------------------------------------------------------------------
+# Config loading: file + env, merged beneath argparse defaults.
+# Precedence: CLI flags > KENOMA_* env vars > config file > hardcoded default.
+# ---------------------------------------------------------------------------
+
+CONFIG_KEYS = {
+    "model": str,
+    "device": str,
+    "max_new_tokens": int,
+    "temperature": float,
+    "top_p": float,
+    "repetition_penalty": float,
+    "context_chars": int,
+    "prompt": str,
+    "history": int,
+    "tmux_lines": int,
+    "quantize": str,
+    "kv_cache": bool,
+}
+
+ENV_PREFIX = "KENOMA_"
+
+
+def config_path() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return Path(base) / "kenoma" / "config.toml"
+
+
+def load_config_file() -> dict:
+    """Return a flat dict of recognized keys from the TOML config, or {}.
+    Silently returns {} on 3.9/3.10 (no tomllib) or if file missing."""
+    if tomllib is None:
+        return {}
+    p = config_path()
+    if not p.is_file():
+        return {}
+    try:
+        with open(p, "rb") as f:
+            data = tomllib.load(f)
+    except Exception as e:
+        print(f"[kenoma: failed to read {p}: {e}]", file=sys.stderr)
+        return {}
+    return {k: v for k, v in data.items() if k in CONFIG_KEYS}
+
+
+def load_env_overrides() -> dict:
+    out = {}
+    for k, typ in CONFIG_KEYS.items():
+        name = ENV_PREFIX + k.upper()
+        if name not in os.environ:
+            continue
+        raw = os.environ[name]
+        try:
+            if typ is bool:
+                out[k] = raw.strip().lower() in ("1", "true", "yes", "y", "on")
+            else:
+                out[k] = typ(raw)
+        except (ValueError, TypeError):
+            print(f"[kenoma: ignoring invalid {name}={raw!r}]", file=sys.stderr)
+    return out
+
+
+def merged_defaults() -> dict:
+    d = load_config_file()
+    d.update(load_env_overrides())
+    return d
+
+
+# ---------------------------------------------------------------------------
+# Seed transcript capture.
+# ---------------------------------------------------------------------------
 
 def capture_tmux_pane(lines: int) -> str:
     """Return the last `lines` lines of the current tmux pane's scrollback,
@@ -32,7 +110,7 @@ def capture_tmux_pane(lines: int) -> str:
             ["tmux", "capture-pane", "-p", "-J", "-S", f"-{lines}"],
             capture_output=True, text=True, timeout=3,
         )
-        # Drop the tail: the command that launched fake_term, the "[loading ...]"
+        # Drop the tail: the command that launched kenoma, the "[loading ...]"
         # message, and the current live prompt.
         rows = out.stdout.rstrip("\n").split("\n")
         return "\n".join(rows[:-3]) if len(rows) > 3 else ""
@@ -104,6 +182,10 @@ def capture_prompt() -> str:
     return f"{os.getenv('USER', 'user')}@{socket.gethostname().split('.')[0]}:{os.getcwd()} $ "
 
 
+# ---------------------------------------------------------------------------
+# Stop detection.
+# ---------------------------------------------------------------------------
+
 PROMPT_LIKE = re.compile(r"\n[^\n]{1,200}[\$#%>] ")
 PROMPT_LIKE_MAX_LINE = 200
 
@@ -155,37 +237,168 @@ class StopOnPromptLike(StoppingCriteria):
         return -1
 
 
+# ---------------------------------------------------------------------------
+# Device / dtype / quantization.
+# ---------------------------------------------------------------------------
+
+def pick_device(requested: str) -> str:
+    """Resolve --device auto to the best available backend."""
+    if requested != "auto":
+        return requested
+    if torch.cuda.is_available():
+        return "cuda"
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available() and mps.is_built():
+        return "mps"
+    return "cpu"
+
+
+def pick_dtype(device: str, quantize: str) -> "torch.dtype":
+    if quantize in ("4bit", "8bit"):
+        # bnb compute dtype; weights are quantized separately.
+        return torch.float16
+    if device.startswith("cuda") or device == "mps":
+        return torch.float16
+    return torch.float32
+
+
+def build_quant_config(kind: str):
+    """Return a BitsAndBytesConfig, or None. Exits with a clear error if the
+    user asked for quantization but bitsandbytes isn't installed."""
+    if kind in (None, "none", ""):
+        return None
+    try:
+        from transformers import BitsAndBytesConfig
+    except ImportError:
+        print("[kenoma: this transformers install lacks BitsAndBytesConfig]", file=sys.stderr)
+        sys.exit(2)
+    try:
+        import bitsandbytes  # noqa: F401
+    except ImportError:
+        print("[kenoma: --quantize requires bitsandbytes — `pip install kenoma[quantize]` or `pip install bitsandbytes`]", file=sys.stderr)
+        sys.exit(2)
+    if kind == "4bit":
+        return BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=torch.float16,
+        )
+    if kind == "8bit":
+        return BitsAndBytesConfig(load_in_8bit=True)
+    print(f"[kenoma: unknown --quantize {kind!r}]", file=sys.stderr)
+    sys.exit(2)
+
+
+def load_model(args):
+    """Resolve device, build quant config, load tokenizer + model. Returns
+    (tokenizer, model, device)."""
+    device = pick_device(args.device)
+    quant = None if args.quantize == "none" else args.quantize
+    if quant and not device.startswith("cuda"):
+        print(f"[kenoma: --quantize {quant} requires CUDA; resolved device is {device!r}]", file=sys.stderr)
+        sys.exit(2)
+    dtype = pick_dtype(device, quant or "none")
+    kwargs = dict(torch_dtype=dtype)
+    quant_config = build_quant_config(quant) if quant else None
+    if quant_config is not None:
+        kwargs["quantization_config"] = quant_config
+        # bnb needs accelerate's placement; don't fight it.
+        kwargs["device_map"] = "auto"
+
+    tok = AutoTokenizer.from_pretrained(args.model)
+    model = AutoModelForCausalLM.from_pretrained(args.model, **kwargs)
+    if quant_config is None:
+        # Not using accelerate's device_map; place the whole model ourselves.
+        model.to(device)
+    if tok.pad_token_id is None:
+        tok.pad_token_id = tok.eos_token_id
+    return tok, model, device
+
+
+# ---------------------------------------------------------------------------
+# KV cache reuse across turns.
+#
+# We keep (cached_ids, cached_kv) where cached_ids is the token sequence the
+# cache covers. On each turn we tokenize the new buffer, find the longest
+# token-level common prefix with cached_ids, truncate the cache to that
+# prefix, and feed only the delta. After generation we truncate the returned
+# cache back to len(target_ids) — i.e. drop the generated-tokens portion.
+# That matters because we don't actually store the model's generated tail as-
+# is; we strip the prompt-shaped suffix and append our own canonical
+# prompt_tmpl. Dropping the cached generated tail keeps the cache aligned
+# with what we'll retokenize next turn.
+# ---------------------------------------------------------------------------
+
+def lcp_len(a, b) -> int:
+    n = min(len(a), len(b))
+    i = 0
+    while i < n and a[i] == b[i]:
+        i += 1
+    return i
+
+
+def truncate_cache(cache, n_tokens: int):
+    if cache is None or n_tokens <= 0:
+        return None
+    if hasattr(cache, "crop"):
+        cache.crop(n_tokens)
+        return cache
+    # Legacy tuple-of-tuples: each (key, value) is [batch, heads, seq, head_dim].
+    return tuple(
+        (k[..., :n_tokens, :], v[..., :n_tokens, :])
+        for (k, v) in cache
+    )
+
+
+# ---------------------------------------------------------------------------
+# REPL.
+# ---------------------------------------------------------------------------
+
 def main() -> None:
+    defaults = merged_defaults()
+
     ap = argparse.ArgumentParser(description="LLM fake terminal")
-    ap.add_argument("model", nargs="?", default="Qwen/Qwen2.5-0.5B",
+    ap.add_argument("model", nargs="?",
+                    default=defaults.get("model", "Qwen/Qwen2.5-0.5B"),
                     help="HF model id or local path (base/completion model, not chat-tuned)")
-    ap.add_argument("--device", default="auto")
-    ap.add_argument("--max-new-tokens", type=int, default=2048)
-    ap.add_argument("--temperature", type=float, default=1.0)
-    ap.add_argument("--top-p", type=float, default=0.95)
-    ap.add_argument("--repetition-penalty", type=float, default=1.05)
-    ap.add_argument("--context-chars", type=int, default=6000,
+    ap.add_argument("--device", default=defaults.get("device", "auto"),
+                    help="'auto' picks cuda → mps → cpu")
+    ap.add_argument("--max-new-tokens", type=int,
+                    default=defaults.get("max_new_tokens", 2048))
+    ap.add_argument("--temperature", type=float,
+                    default=defaults.get("temperature", 1.0))
+    ap.add_argument("--top-p", type=float,
+                    default=defaults.get("top_p", 0.95))
+    ap.add_argument("--repetition-penalty", type=float,
+                    default=defaults.get("repetition_penalty", 1.05))
+    ap.add_argument("--context-chars", type=int,
+                    default=defaults.get("context_chars", 6000),
                     help="Max rolling buffer size in chars")
-    ap.add_argument("--prompt", default=None,
+    ap.add_argument("--prompt", default=defaults.get("prompt"),
                     help="Override captured prompt string")
-    ap.add_argument("--history", type=int, default=20,
+    ap.add_argument("--history", type=int,
+                    default=defaults.get("history", 20),
                     help="Seed with last N commands from shell history (0 = disabled). Ignored if tmux capture succeeds.")
-    ap.add_argument("--tmux-lines", type=int, default=300,
+    ap.add_argument("--tmux-lines", type=int,
+                    default=defaults.get("tmux_lines", 300),
                     help="If inside tmux, seed with the last N lines of the current pane's scrollback (real commands + outputs). 0 = disabled.")
+    ap.add_argument("--quantize", choices=["none", "4bit", "8bit"],
+                    default=defaults.get("quantize", "none"),
+                    help="Load model with bitsandbytes quantization (CUDA only).")
+    ap.add_argument("--no-kv-cache", action="store_true",
+                    default=not defaults.get("kv_cache", True),
+                    help="Disable KV cache reuse across turns. Slower; mostly for debugging.")
     args = ap.parse_args()
 
     prompt_tmpl = args.prompt if args.prompt is not None else capture_prompt()
     stop_str = prompt_tmpl.rstrip() or prompt_tmpl
 
     print(f"[loading {args.model} ...]", file=sys.stderr)
-    tok = AutoTokenizer.from_pretrained(args.model)
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else "auto",
-        device_map=args.device,
-    )
-    if tok.pad_token_id is None:
-        tok.pad_token_id = tok.eos_token_id
+    tok, model, device = load_model(args)
+    print(f"[kenoma: device={device} dtype={next(model.parameters()).dtype} "
+          f"quantize={args.quantize} kv_cache={not args.no_kv_cache}]",
+          file=sys.stderr)
 
     # Seed readline history so arrow-up recalls previous commands.
     history_cmds = read_history(args.history)
@@ -195,7 +408,6 @@ def main() -> None:
     tmux_seed = capture_tmux_pane(args.tmux_lines)
     buf = ""
     if tmux_seed:
-        # Real transcript from the live pane — already has its own prompts and outputs.
         buf = tmux_seed.rstrip() + "\n"
     else:
         for cmd in history_cmds:
@@ -204,6 +416,9 @@ def main() -> None:
     # Display only the live prompt, not the seeded transcript.
     sys.stdout.write(prompt_tmpl)
     sys.stdout.flush()
+
+    cached_ids = None
+    cached_kv = None
 
     while True:
         try:
@@ -219,8 +434,31 @@ def main() -> None:
         if len(buf) > args.context_chars:
             buf = buf[-args.context_chars:]
 
-        enc = tok(buf, return_tensors="pt").to(model.device)
-        prompt_len = enc.input_ids.shape[1]
+        target_ids = tok(buf, return_tensors="pt").input_ids[0].tolist()
+
+        # Figure out how much of the cache we can reuse, and what delta to feed.
+        if args.no_kv_cache or cached_ids is None:
+            feed_ids = target_ids
+            kv = None
+            lcp = 0
+        else:
+            lcp = lcp_len(cached_ids, target_ids)
+            # Drop one more token so the final cached position is regenerated;
+            # avoids edge cases where the last cached token's logits are stale
+            # under some model configs.
+            lcp = max(0, lcp - 1) if lcp == len(target_ids) else lcp
+            kv = truncate_cache(cached_kv, lcp) if lcp > 0 else None
+            feed_ids = target_ids[lcp:]
+            if not feed_ids:  # buf didn't grow; shouldn't happen, but be defensive
+                feed_ids = target_ids[-1:]
+                lcp = len(target_ids) - 1
+                kv = truncate_cache(cached_kv, lcp) if lcp > 0 else None
+
+        input_ids = torch.tensor([feed_ids], dtype=torch.long, device=model.device)
+        attention_mask = torch.ones((1, lcp + len(feed_ids)), dtype=torch.long, device=model.device)
+        # The stopper slices the generated tail out of `input_ids` inside the
+        # generation loop — that's feed_ids + generated, so skip len(feed_ids).
+        prompt_len = len(feed_ids)
 
         streamer = TextIteratorStreamer(
             tok, skip_prompt=True, skip_special_tokens=True
@@ -228,7 +466,8 @@ def main() -> None:
         stopper = StopOnPromptLike(tok, stop_str, prompt_len)
         stopping = StoppingCriteriaList([stopper])
         gen_kwargs = dict(
-            **enc,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
             streamer=streamer,
             max_new_tokens=args.max_new_tokens,
             do_sample=True,
@@ -237,9 +476,20 @@ def main() -> None:
             repetition_penalty=args.repetition_penalty,
             stopping_criteria=stopping,
             pad_token_id=tok.pad_token_id,
+            use_cache=True,
+            return_dict_in_generate=True,
         )
+        if kv is not None:
+            gen_kwargs["past_key_values"] = kv
 
-        t = threading.Thread(target=model.generate, kwargs=gen_kwargs)
+        gen_result = {}
+        def run_gen():
+            try:
+                gen_result["out"] = model.generate(**gen_kwargs)
+            except Exception as e:
+                gen_result["err"] = e
+
+        t = threading.Thread(target=run_gen)
         t.start()
 
         produced = ""
@@ -263,6 +513,14 @@ def main() -> None:
             sys.stdout.write("\n")
         t.join()
 
+        if "err" in gen_result:
+            print(f"[kenoma: generation failed: {gen_result['err']}]", file=sys.stderr)
+            cached_ids = None
+            cached_kv = None
+            sys.stdout.write(prompt_tmpl)
+            sys.stdout.flush()
+            continue
+
         idx = stopper.match_end(produced)
         if idx >= 0:
             body = produced[:idx]
@@ -277,6 +535,24 @@ def main() -> None:
         sys.stdout.flush()
 
         buf += body + prompt_tmpl
+
+        # Update the cache for next turn. We truncate back to len(target_ids)
+        # — the point where cache covers exactly the text we fed (pre-
+        # generation). The generated tail is discarded because we've just
+        # replaced it with `body + prompt_tmpl`, which will be retokenized
+        # next turn anyway; any LCP past len(target_ids) would be a lie.
+        if args.no_kv_cache:
+            cached_ids = None
+            cached_kv = None
+        else:
+            out = gen_result.get("out")
+            new_kv = getattr(out, "past_key_values", None) if out is not None else None
+            if new_kv is None:
+                cached_ids = None
+                cached_kv = None
+            else:
+                cached_kv = truncate_cache(new_kv, len(target_ids))
+                cached_ids = target_ids
 
 
 if __name__ == "__main__":
