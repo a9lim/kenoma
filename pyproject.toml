@@ -1,12 +1,44 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "kenoma"
 version = "0.1.0"
-description = "A fake shell powered by raw LLM completion."
+description = "A fake shell powered by raw LLM completion. The model hallucinates command output until it emits the next prompt."
+readme = "README.md"
 requires-python = ">=3.9"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [
+    { name = "a9lim", email = "a9lim@protonmail.com" },
+]
+keywords = [
+    "llm",
+    "terminal",
+    "shell",
+    "hallucination",
+    "completion",
+    "transformers",
+    "huggingface",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Shells",
+    "Topic :: Terminals",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "torch",
     "transformers>=4.44",
@@ -19,6 +51,11 @@ quantize = ["bitsandbytes"]
 
 [project.scripts]
 kenoma = "kenoma:main"
+
+[project.urls]
+Homepage = "https://github.com/a9lim/kenoma"
+Repository = "https://github.com/a9lim/kenoma"
+Issues = "https://github.com/a9lim/kenoma/issues"
 
 [tool.setuptools]
 py-modules = ["kenoma"]
