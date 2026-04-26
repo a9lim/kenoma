@@ -227,6 +227,25 @@ gating" above). On accept, `prompt_tmpl` becomes the matched span (after
 drop the model's match silently. Either way we redraw the canonical
 prompt to the screen.
 
+**Search cursor (cancel + reuse).** Two cooperating optimizations live in
+the streamer loop:
+
+- `skeleton.search(produced, search_anchor)` advances `search_anchor` past
+  what we've already searched, with a `MAX_SKELETON_MATCH_LEN` backtrack
+  so a match anchored in an earlier chunk but completed by the latest
+  chunk isn't missed. Without this, each chunk re-scanned the whole
+  growing `produced` (O(n²) over a turn).
+- `last_nl_in_produced` is updated from each `chunk.rfind("\n")` and fed
+  to `safe_flush_point` as a hint, so the holdback check doesn't rfind
+  the full buffer per chunk.
+- On a main-thread match we set `cancel.set()` before `break`, so the gen
+  thread stops producing into the streamer's unbounded queue. The
+  gen-side `StopOnPromptLike` *usually* fires on the same token, but the
+  cancel is defense in depth.
+- The match details (`body_end`, `prompt_end`, captured cwd) are remembered
+  in loop locals and reused after the loop instead of re-running
+  `match_span` on `produced`.
+
 ## Controls
 
 - **Enter** — submit command, model generates fake output.
@@ -239,16 +258,31 @@ prompt to the screen.
 - **Ctrl-C** at the input prompt — exit.
 - **Ctrl-D / EOF** — exit.
 
+## Tokenization cache
+
+`encode_with_cache(tok, buf, prev_buf, prev_ids)` skips re-tokenizing the
+whole growing buffer when `buf` strictly extends `prev_buf` (the common
+case: previous turn's body landed, then user typed a line). It encodes
+only the suffix with `add_special_tokens=False` and concats. To guard
+against BPE/SP merges that span the join point, it re-tokenizes a
+`_INCREMENTAL_TOK_OVERLAP=64`-char back-overlap and verifies it tokenizes
+to the cached tail — if not, falls back to a full `tok.encode(buf)`.
+After buffer trim, `buf` no longer starts with `prev_buf`, the prefix
+check fails, and the next turn full-encodes. `lcp_len` has a slice-equality
+fast path that handles the very common "full prefix match" case at C
+speed; the Python loop only runs on real divergence.
+
 ## KV cache
 
 KV cache reuse is opt-in (`kv_cache = true`, default; disable with
-`--no-kv-cache`). On each turn we tokenize the new buffer, find the
-longest token-level common prefix with the cached `cached_ids`, truncate
-`cached_kv` to that prefix, and feed only the delta. After generation we
-truncate the returned cache back to `len(target_ids)` — i.e. drop the
-generated-tokens portion — because we replace the model's tail with our
-own `body + prompt_tmpl` and any LCP past `len(target_ids)` would be a
-lie.
+`--no-kv-cache`). Mutually exclusive with `--compile` (the static cache
+doesn't expose `crop()`; `--compile` forces `--no-kv-cache=True`). On
+each turn we tokenize the new buffer, find the longest token-level
+common prefix with the cached `cached_ids`, truncate `cached_kv` to that
+prefix, and feed only the delta. After generation we truncate the
+returned cache back to `len(target_ids)` — i.e. drop the generated-tokens
+portion — because we replace the model's tail with our own
+`body + prompt_tmpl` and any LCP past `len(target_ids)` would be a lie.
 
 **Cache state is binary.** A partial-state cache (cached_ids saying "I
 cover N tokens" alongside a None/wrong-length kv) breaks the next turn:
@@ -278,6 +312,36 @@ first user turn pays the seed's prefill cost — the original behavior.
 Trade-off: launch is slower by one prefill of the seed; first turn is
 faster by the same amount.
 
+## Backend selection
+
+`load_model()` resolves device, picks a dtype, and asks for the best
+attention implementation we can use:
+
+- CUDA without bnb quantization: try `flash_attention_2` (requires the
+  `flash_attn` package); on `from_pretrained` failure, fall back to
+  `sdpa` and reload.
+- Anywhere else (CUDA-with-bnb, MPS, CPU): `sdpa`. PyTorch's SDPA
+  dispatches to flash / memory-efficient kernels under the hood when
+  available.
+
+`low_cpu_mem_usage=True` is always set; weights stream into final-place
+tensors instead of an FP32 copy first.
+
+`--compile` (default off) wires up `torch.compile(model.forward,
+mode="reduce-overhead")` and flips the generation config to
+`cache_implementation="static"`. This trades cross-turn KV cache reuse
+(the static cache can't `crop()`) for ~2-3x faster decode on CUDA. First
+turn pays the compile + CUDA-graph capture cost. On MPS/CPU the gain is
+smaller and sometimes negative; we warn but still try.
+
+## Per-turn allocations
+
+The all-ones `attention_mask` tensor is preallocated once, sized
+geometrically (with `max_new_tokens` headroom), and sliced on each turn
+— no per-turn `torch.ones()` allocation. `repetition_penalty` is dropped
+from `gen_kwargs` when the user sets it to exactly 1.0 (HF would
+otherwise still construct a no-op processor and run it every token).
+
 ## Running
 
 ```
@@ -290,9 +354,11 @@ positional argument (defaults to `Qwen/Qwen2.5-0.5B` when omitted).
 
 Flags worth knowing: `--prompt` (override captured PS1), `--temperature`
 (default 1.0), `--top-p` (default 0.95), `--repetition-penalty` (default
-1.05), `--max-new-tokens` (default 2048), `--context-chars`, `--history`,
-`--tmux-lines`, `--device`, `--quantize {none,4bit,8bit}`, `--no-kv-cache`,
-`--version`.
+1.05; set to 1.0 to skip the processor entirely), `--max-new-tokens`
+(default 2048), `--context-chars`, `--history`, `--tmux-lines`,
+`--device`, `--quantize {none,4bit,8bit}`, `--no-kv-cache`, `--compile`
+(static KV cache + torch.compile, mutually exclusive with cross-turn KV
+cache reuse), `--version`.
 
 ## Non-goals
 

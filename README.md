@@ -56,6 +56,7 @@ history = 20
 tmux_lines = 300
 quantize = "none"
 kv_cache = true
+compile = false
 ```
 
 The env var for any key is `KENOMA_<KEY>` uppercased, so `KENOMA_MODEL=gpt2 kenoma` works.
@@ -67,6 +68,7 @@ Flags:
 - `--device {auto,cuda,mps,cpu}`: `auto` resolves to cuda, then mps, then cpu.
 - `--quantize {none,4bit,8bit}`: bitsandbytes quantization. Requires CUDA and the `quantize` extra.
 - `--no-kv-cache`: disable KV cache reuse across turns.
+- `--compile`: `torch.compile` the model with a static KV cache for faster decode (best on CUDA). The first turn pays a compile cost; cross-turn KV cache reuse is forfeited because the static cache doesn't expose `crop()`.
 - `--history N`: seed with the last N commands from shell history (0 disables).
 - `--tmux-lines N`: if inside tmux, seed with the last N lines of pane scrollback (0 disables).
 - `--context-chars N`: cap the rolling buffer at N chars. 
