@@ -13,7 +13,7 @@ that only pretends to do anything.
 ## Layout
 
 - `kenoma.py` — single-module entry point. CLI, prompt capture, history/tmux seeding, readline input, REPL, streaming generation, stop logic.
-- `pyproject.toml` — packaging. Declares `kenoma` console script (`kenoma = kenoma:main`) and deps: `torch`, `transformers>=4.44`, `accelerate`, `sentencepiece`.
+- `pyproject.toml` — packaging. Declares `kenoma` console script (`kenoma = kenoma:main`) and deps: `torch`, `transformers>=4.44`, `accelerate`, `sentencepiece`, `tomli>=1.1.0` (only on Python <3.11; 3.11+ uses stdlib `tomllib`).
 
 ## Design
 
