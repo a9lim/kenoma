@@ -1,10 +1,10 @@
 # kenoma
 
 [![CI](https://github.com/a9lim/kenoma/actions/workflows/ci.yml/badge.svg)](https://github.com/a9lim/kenoma/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-%3E%3D3.9-blue)](https://www.python.org/)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](https://www.gnu.org/licenses/agpl-3.0)
 
-A fake shell powered by raw LLM completion. No chat template, no system prompt. The real shell's `PS1` is captured once at startup and used as the stop string; the model hallucinates command output until it emits the next prompt, and generation stops when that happens.
+A fake shell powered by raw LLM completion. No chat template, no system prompt. The real shell's `PS1` is captured once at startup and turned into a structural skeleton; the model hallucinates command output until it emits a line matching that skeleton, at which point generation stops and that emitted prompt becomes the new canonical for the next turn.
 
 The name is from Gnostic cosmology: *kenoma* is the deficient, illusory world of appearances, as opposed to *pleroma*, the fullness of reality. It fits a terminal that only pretends to do anything.
 
@@ -48,15 +48,14 @@ kenoma seeds the model with your real shell context so the hallucinations are gr
 2. If we're inside tmux, the current pane's scrollback is grabbed via `tmux capture-pane` and fed into the buffer. The model sees real commands with their real outputs.
 3. Otherwise, the last N commands from `$HISTFILE` (or `~/.zsh_history` or `~/.bash_history`) are replayed as seed, with the captured `PS1` between them. The model sees the commands but no outputs, so it thinks they produced nothing.
 
-Generation runs on a rolling text buffer that holds the whole fake session transcript. Each turn, the user's line is appended, the buffer is retokenized (with KV cache reuse across turns for speed), and `model.generate()` streams tokens until one of three things happens:
+Generation runs on a rolling text buffer that holds the whole fake session transcript. Each turn, the user's line is appended, the buffer is retokenized (with KV cache reuse across turns for speed), and `model.generate()` streams tokens until one of two things happens:
 
 - `eos_token_id` fires.
-- The exact captured prompt appears in the generated tail.
-- A prompt-shaped line matches the regex `\n[^\n]{1,200}[$#%>] `.
+- A line matches the prompt skeleton — `\n` plus the captured prompt with its cwd portion turned into a `[^\s]+` wildcard (full path or `~`-relative form, whichever appears in the prompt). So if your captured prompt was `a9lim@host:/Users/a9lim/Work/kenoma %`, the skeleton matches `\na9lim@host:/tmp %` after a fake `cd`, but rejects `\n50 % done`.
 
-The regex matters because the captured prompt contains variable parts like cwd, git branch, and `$?`. After `cd foo`, a realistic continuation from the model is something like `user@host foo %`, which is the same shape but doesn't match exactly. The regex catches these.
+When the skeleton matches, kenoma adopts the matched substring as the new canonical prompt for display, the next turn's stop check, and the buffer glue. The fake terminal's prompt cwd actually tracks the model's fake `cd`s instead of forever showing the cwd kenoma was launched in. The trade-off: prompts that show only the cwd basename (bash `\W`-style), or that include a git branch / exit-status segment, won't match drifted versions — those generations run to `--max-new-tokens` instead of stopping early.
 
-Output streams line by line. A small holdback keeps a partial prompt from leaking to the screen before the stop fires; once a line either completes, grows past the regex's line budget, or hits a stop, its visible portion is flushed.
+Output streams line by line. A small holdback keeps a partial prompt from leaking to the screen before the stop fires; once a line either completes, grows past the holdback budget, or hits a stop, its visible portion is flushed.
 
 ## Configuration
 
