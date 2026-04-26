@@ -1,6 +1,6 @@
 # Contributing to kenoma
 
-Thank you very much for wanting to contribute! I really appreciate any contribution you would like to make, whether it's a PR, a bug report, or a tip about a base model that plays a terminal especially well.
+Thank you very much for wanting to contribute! I really appreciate any contribution you would like to make, whether it's a PR or a bug report.
 
 ## Dev setup
 
@@ -22,11 +22,11 @@ ruff check . --fix    # auto-fix what's fixable
 pyright
 ```
 
-Pyright is scoped to `kenoma.py` and runs in standard mode; the noisy partial-stub warnings from torch and transformers are downgraded so the only errors that fire are real ones (missing parameter types, attribute access, argument or call mismatches).
+Pyright is scoped to `kenoma.py` and runs in standard mode; the warnings from torch and transformers are downgraded so the only errors that appear are real.
 
 ## Manual testing
 
-There is no automated test suite yet because kenoma is mostly a wrapper around `model.generate()` and the interesting behavior is in the streaming and stop-detection logic, which is hard to unit-test without a real model. If you touch the skeleton, the holdback, or the KV cache code, please at least run a manual session against a small model and confirm:
+There is no automated test suite yet because kenoma is a wrapper around `model.generate()` and the meaningful behavior is in the streaming and stop-detection which is hard to unit-test without a real model. If you touch anything, please run a manual session and confirm:
 
 1. The prompt streams line by line, not in big bursts.
 2. Generation stops on a prompt-shaped line and adopts it (try a fake `cd /tmp` and check the next prompt's cwd).
@@ -40,7 +40,7 @@ is small enough to run on CPU for a smoke test.
 
 ## Adding a new feature flag
 
-Three places need an update if you add a knob:
+Three places need an update if you add something:
 
 1. `CONFIG_KEYS` at the top of `kenoma.py` (key plus type).
 2. The `argparse` block in `main()` with a CLI flag.
