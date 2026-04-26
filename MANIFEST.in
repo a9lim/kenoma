@@ -1,0 +1,6 @@
+# README, LICENSE, and pyproject.toml are auto-included by setuptools.
+# Everything below is the supplemental project paperwork that wouldn't
+# otherwise make it into the sdist tarball.
+include CONTRIBUTING.md
+include SECURITY.md
+include CLAUDE.md
