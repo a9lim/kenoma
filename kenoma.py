@@ -2,6 +2,11 @@
 """LLM fake terminal: raw completion, no chat template. The real shell's PS1
 is captured once and used as both the seed and the stop string, so the model
 hallucinates command output until it emits the next prompt."""
+
+# Kept above the heavy imports so setuptools' ``attr: kenoma.__version__``
+# can AST-read it without paying the torch/transformers import cost.
+__version__ = "1.0.0"
+
 import argparse
 import os
 import re
@@ -16,7 +21,10 @@ from typing import Any, cast
 try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:
-    tomllib = None
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError:
+        tomllib = None  # type: ignore[assignment]
 
 import torch
 from transformers import (
@@ -26,8 +34,6 @@ from transformers import (
     StoppingCriteriaList,
     TextIteratorStreamer,
 )
-
-__version__ = "1.0.0"
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +66,8 @@ def config_path() -> Path:
 
 def load_config_file() -> dict[str, Any]:
     """Return a flat dict of recognized keys from the TOML config, or {}.
-    Silently returns {} on 3.9/3.10 (no tomllib) or if file missing."""
+    Silently returns {} if no TOML reader is available (stdlib ``tomllib``
+    on 3.11+, the ``tomli`` backport on 3.9/3.10) or if the file is missing."""
     if tomllib is None:
         return {}
     p = config_path()

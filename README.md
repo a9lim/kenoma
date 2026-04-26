@@ -58,7 +58,7 @@ quantize = "none"
 kv_cache = true
 ```
 
-The env var for any key is `KENOMA_<KEY>` uppercased, so `KENOMA_MODEL=gpt2 kenoma` works. Config file support requires Python 3.11+ for `tomllib`; on 3.9 and 3.10 the file is silently ignored but env vars and CLI flags still work.
+The env var for any key is `KENOMA_<KEY>` uppercased, so `KENOMA_MODEL=gpt2 kenoma` works. Config files use stdlib `tomllib` on 3.11+ and the `tomli` backport on 3.9 / 3.10 (pulled in automatically).
 
 Flags:
 
