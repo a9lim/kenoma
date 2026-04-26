@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kenoma"
-version = "0.1.0"
+version = "1.0.0"
 description = "A fake shell powered by raw LLM completion. The model hallucinates command output until it emits the next prompt."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -101,6 +101,9 @@ reportCallIssue = "error"
 reportReturnType = "error"
 reportAssignmentType = "error"
 reportUnnecessaryIsInstance = "warning"
-# transformers re-exports many symbols whose stubs don't list them in
-# __all__; newer pyright treats that as a private-import error.
-reportPrivateImportUsage = "warning"
+# torch and transformers re-export many symbols (torch.dtype,
+# torch.float16, torch.tensor, etc.) but their stubs don't list them in
+# __all__.  Newer pyright flags these as private-import use even though
+# they're the long-standing public API.  Disabled here because every
+# instance is a false positive on third-party stubs.
+reportPrivateImportUsage = "none"
