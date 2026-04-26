@@ -40,26 +40,24 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Check version consistency
+      # pyproject.toml declares the version as `dynamic` and reads it from
+      # kenoma.__version__ via setuptools' `attr:`. This job verifies the
+      # AST-read actually resolves end-to-end after install — catches
+      # regressions where a top-of-module import would force setuptools
+      # to evaluate (and potentially fail on) the heavy torch path.
+      - run: pip install .
+      - name: Verify dynamic version resolves
         run: |
           python - <<'PY'
-          import pathlib
-          import re
-          import tomllib
-
-          pyproject_version = tomllib.loads(
-              pathlib.Path("pyproject.toml").read_text()
-          )["project"]["version"]
-          module_text = pathlib.Path("kenoma.py").read_text()
-          match = re.search(r'^__version__ = "([^"]+)"', module_text, re.M)
-          if match is None:
-              raise SystemExit("kenoma.py has no __version__")
-          module_version = match.group(1)
-          if pyproject_version != module_version:
+          import importlib.metadata
+          import kenoma
+          installed = importlib.metadata.version("kenoma")
+          if installed != kenoma.__version__:
               raise SystemExit(
-                  f"version mismatch: pyproject={pyproject_version}, "
-                  f"__version__={module_version}"
+                  f"dynamic version mismatch: installed={installed}, "
+                  f"__version__={kenoma.__version__}"
               )
+          print(f"OK: kenoma {installed}")
           PY
 
   build:
