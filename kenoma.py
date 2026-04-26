@@ -27,7 +27,7 @@ from transformers import (
     TextIteratorStreamer,
 )
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ def config_path() -> Path:
     return Path(base) / "kenoma" / "config.toml"
 
 
-def load_config_file() -> dict:
+def load_config_file() -> dict[str, Any]:
     """Return a flat dict of recognized keys from the TOML config, or {}.
     Silently returns {} on 3.9/3.10 (no tomllib) or if file missing."""
     if tomllib is None:
@@ -75,8 +75,8 @@ def load_config_file() -> dict:
     return {k: v for k, v in data.items() if k in CONFIG_KEYS}
 
 
-def load_env_overrides() -> dict:
-    out = {}
+def load_env_overrides() -> dict[str, Any]:
+    out: dict[str, Any] = {}
     for k, typ in CONFIG_KEYS.items():
         name = ENV_PREFIX + k.upper()
         if name not in os.environ:
@@ -92,7 +92,7 @@ def load_env_overrides() -> dict:
     return out
 
 
-def merged_defaults() -> dict:
+def merged_defaults() -> dict[str, Any]:
     d = load_config_file()
     d.update(load_env_overrides())
     return d
@@ -121,7 +121,7 @@ def capture_tmux_pane(lines: int) -> str:
         return ""
 
 
-def read_history(n: int) -> list:
+def read_history(n: int) -> list[str]:
     """Return the last n commands from the user's shell history file.
     Handles zsh extended-history format (`: <ts>:<dur>;<cmd>`) and plain bash."""
     if n <= 0:
@@ -203,7 +203,7 @@ def capture_prompt() -> str:
 HOLDBACK_LINE_BUDGET = 200  # streaming-flush heuristic, see safe_flush_point
 
 
-def build_skeleton(prompt: str) -> "re.Pattern":
+def build_skeleton(prompt: str) -> "re.Pattern[str]":
     """Return a compiled regex that matches the captured prompt with its cwd
     portion turned into a wildcard. Anchored at \\n. The wildcard is
     `[^\\s]+`, so cwd substitutions can't bleed across a space (which keeps
@@ -258,7 +258,7 @@ class StopOnPromptLike(StoppingCriteria):
     """Stop when the generated tail contains a line matching the prompt
     skeleton (newline + literal-prefix + cwd-wildcard + literal-suffix)."""
 
-    def __init__(self, tokenizer, skeleton: "re.Pattern", prompt_len: int):
+    def __init__(self, tokenizer: Any, skeleton: "re.Pattern[str]", prompt_len: int):
         self.tok = tokenizer
         self.skeleton = skeleton
         self.prompt_len = prompt_len
@@ -315,7 +315,7 @@ def build_quant_config(kind: str):
         print("[kenoma: this transformers install lacks BitsAndBytesConfig]", file=sys.stderr)
         sys.exit(2)
     try:
-        import bitsandbytes  # noqa: F401
+        import bitsandbytes  # noqa: F401  # pyright: ignore[reportMissingImports]
     except ImportError:
         print("[kenoma: --quantize requires bitsandbytes — `pip install kenoma[quantize]` or `pip install bitsandbytes`]", file=sys.stderr)
         sys.exit(2)
@@ -332,7 +332,7 @@ def build_quant_config(kind: str):
     sys.exit(2)
 
 
-def load_model(args):
+def load_model(args: argparse.Namespace):
     """Resolve device, build quant config, load tokenizer + model. Returns
     (tokenizer, model, device)."""
     device = pick_device(args.device)
@@ -372,7 +372,7 @@ def load_model(args):
 # with what we'll retokenize next turn.
 # ---------------------------------------------------------------------------
 
-def lcp_len(a, b) -> int:
+def lcp_len(a: list[int], b: list[int]) -> int:
     n = min(len(a), len(b))
     i = 0
     while i < n and a[i] == b[i]:
@@ -380,7 +380,7 @@ def lcp_len(a, b) -> int:
     return i
 
 
-def truncate_cache(cache, n_tokens: int):
+def truncate_cache(cache: Any, n_tokens: int):
     if cache is None or n_tokens <= 0:
         return None
     if hasattr(cache, "crop"):
