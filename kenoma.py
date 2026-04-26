@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from typing import Any, cast
 
 try:
     import tomllib  # Python 3.11+
@@ -25,6 +26,8 @@ from transformers import (
     StoppingCriteriaList,
     TextIteratorStreamer,
 )
+
+__version__ = "0.1.0"
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +263,9 @@ class StopOnPromptLike(StoppingCriteria):
         self.skeleton = skeleton
         self.prompt_len = prompt_len
 
-    def __call__(self, input_ids, scores, **kw) -> bool:
+    # Transformers accepts a plain bool here even though the base signature
+    # declares BoolTensor; the override is intentional.
+    def __call__(self, input_ids, scores, **kw) -> bool:  # type: ignore[reportIncompatibleMethodOverride]
         text = self.tok.decode(input_ids[0][self.prompt_len:], skip_special_tokens=True)
         return self.skeleton.search(text) is not None
 
@@ -336,7 +341,7 @@ def load_model(args):
         print(f"[kenoma: --quantize {quant} requires CUDA; resolved device is {device!r}]", file=sys.stderr)
         sys.exit(2)
     dtype = pick_dtype(device, quant or "none")
-    kwargs = dict(torch_dtype=dtype)
+    kwargs: dict[str, Any] = dict(torch_dtype=dtype)
     quant_config = build_quant_config(quant) if quant else None
     if quant_config is not None:
         kwargs["quantization_config"] = quant_config
@@ -347,7 +352,7 @@ def load_model(args):
     model = AutoModelForCausalLM.from_pretrained(args.model, **kwargs)
     if quant_config is None:
         # Not using accelerate's device_map; place the whole model ourselves.
-        model.to(device)
+        model.to(device)  # type: ignore[reportArgumentType]
     if tok.pad_token_id is None:
         tok.pad_token_id = tok.eos_token_id
     return tok, model, device
@@ -505,7 +510,7 @@ def main() -> None:
         )
         stopper = StopOnPromptLike(tok, skeleton, prompt_len)
         stopping = StoppingCriteriaList([stopper])
-        gen_kwargs = dict(
+        gen_kwargs: dict[str, Any] = dict(
             input_ids=input_ids,
             attention_mask=attention_mask,
             streamer=streamer,
@@ -522,10 +527,10 @@ def main() -> None:
         if kv is not None:
             gen_kwargs["past_key_values"] = kv
 
-        gen_result = {}
+        gen_result: dict[str, Any] = {}
         def run_gen():
             try:
-                gen_result["out"] = model.generate(**gen_kwargs)
+                gen_result["out"] = cast(Any, model).generate(**gen_kwargs)
             except Exception as e:
                 gen_result["err"] = e
 

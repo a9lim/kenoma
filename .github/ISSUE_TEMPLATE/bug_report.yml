@@ -1,0 +1,80 @@
+name: Bug report
+description: Something broke, crashed, or behaved wrong
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what did you get?
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Model ID
+      description: HuggingFace model id or local path (e.g. `Qwen/Qwen2.5-0.5B`)
+      placeholder: Qwen/Qwen2.5-0.5B
+    validations:
+      required: true
+
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device
+      options:
+        - cuda
+        - mps
+        - cpu
+        - auto
+    validations:
+      required: true
+
+  - type: input
+    id: kenoma-version
+    attributes:
+      label: kenoma version
+      description: Output of `pip show kenoma | grep Version`
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.12"
+    validations:
+      required: true
+
+  - type: input
+    id: shell
+    attributes:
+      label: Shell
+      description: Value of `$SHELL` (zsh, bash, etc.)
+      placeholder: /bin/zsh
+    validations:
+      required: true
+
+  - type: textarea
+    id: prompt
+    attributes:
+      label: Captured prompt
+      description: What `PS1` did kenoma capture? (or what you passed via `--prompt`)
+      render: shell
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The shortest command line and input that reproduces the issue
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Full traceback or log output
+      render: shell

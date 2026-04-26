@@ -6,31 +6,70 @@ on:
   pull_request:
     branches: [main]
 
-jobs:
-  syntax:
-    name: Syntax check
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Compile
-        run: python -m py_compile kenoma.py
+permissions:
+  contents: read
 
-  build:
-    name: Build and check package
+jobs:
+  lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Install build tools
-        run: python -m pip install --upgrade build twine
+      - run: pip install ruff
+      - run: ruff check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      # Install dev extras so pyright can resolve torch / transformers
+      # when it analyzes kenoma.py.
+      - run: pip install -e ".[dev]"
+      - run: pyright
+
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Check version consistency
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+          import tomllib
+
+          pyproject_version = tomllib.loads(
+              pathlib.Path("pyproject.toml").read_text()
+          )["project"]["version"]
+          module_text = pathlib.Path("kenoma.py").read_text()
+          match = re.search(r'^__version__ = "([^"]+)"', module_text, re.M)
+          if match is None:
+              raise SystemExit("kenoma.py has no __version__")
+          module_version = match.group(1)
+          if pyproject_version != module_version:
+              raise SystemExit(
+                  f"version mismatch: pyproject={pyproject_version}, "
+                  f"__version__={module_version}"
+              )
+          PY
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade build twine
       - name: Build sdist and wheel
         run: python -m build
       - name: Check artifacts

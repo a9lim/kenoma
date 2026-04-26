@@ -48,6 +48,12 @@ dependencies = [
 
 [project.optional-dependencies]
 quantize = ["bitsandbytes"]
+dev = [
+    "ruff>=0.6.9",
+    "pyright>=1.1.400",
+    "build>=1.0",
+    "twine>=5.0",
+]
 
 [project.scripts]
 kenoma = "kenoma:main"
@@ -56,6 +62,45 @@ kenoma = "kenoma:main"
 Homepage = "https://github.com/a9lim/kenoma"
 Repository = "https://github.com/a9lim/kenoma"
 Issues = "https://github.com/a9lim/kenoma/issues"
+Releases = "https://github.com/a9lim/kenoma/releases"
 
 [tool.setuptools]
 py-modules = ["kenoma"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+# E501 (line too long): kenoma.py has long help strings and module docstrings
+# we don't want to break.  E741 (ambiguous variable name) and E731 (lambda
+# assignment): conventional in tight scripting.  E402 (module level import
+# not at top): we deliberately gate `tomllib` import behind a try/except,
+# and bitsandbytes is imported lazily inside `build_quant_config`.
+ignore = ["E501", "E741", "E402", "E731"]
+
+# Pyright — scoped to the single module that is the public API surface.
+# ``standard`` mode (rather than ``strict``) is deliberate: torch /
+# transformers stubs are partial and ``strict`` fires constantly on
+# legitimate ``Tensor`` calls.  We escalate the rules that actually catch
+# bugs (missing parameter / type-arg, attribute access, argument / call /
+# return / assignment) to error.
+[tool.pyright]
+include = ["kenoma.py"]
+exclude = ["**/__pycache__"]
+pythonVersion = "3.9"
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+reportMissingImports = "warning"
+reportMissingParameterType = "error"
+reportMissingTypeArgument = "error"
+reportAttributeAccessIssue = "error"
+reportArgumentType = "error"
+reportCallIssue = "error"
+reportReturnType = "error"
+reportAssignmentType = "error"
+reportUnnecessaryIsInstance = "warning"
+# transformers re-exports many symbols whose stubs don't list them in
+# __all__; newer pyright treats that as a private-import error.
+reportPrivateImportUsage = "warning"
