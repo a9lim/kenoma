@@ -23,6 +23,17 @@ A few things kenoma does may touch your real environment, even though no command
 
 If you don't want this, please pass `--history 0`, `--tmux-lines 0`, or `--prompt '...'` to disable them. The model runs against whatever is in its context, so don't give it anything you don't want it to see.
 
+## Adopted prompts are gated
+
+The model can emit prompt-shaped output during a turn, and we adopt that as the new canonical `prompt_tmpl` (to track fake `cd`s). This is gated by an `adoptable()` check:
+
+- Length capped at 512 chars.
+- No control bytes (ANSI escapes, etc.) except `\t`.
+- No embedded newlines.
+- The wildcarded cwd portion has to be path-shaped (no shell metachars like `;`, `|`, `&`).
+
+When the gate rejects, we keep the previous prompt and drop the model's emitted span silently. This prevents the model from poisoning the displayed prompt with arbitrary terminal escapes.
+
 ## What kenoma does not do
 
 - Execute anything; nothing touches your real filesystem.

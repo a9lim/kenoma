@@ -40,11 +40,12 @@ is small enough to run on CPU for a smoke test.
 
 ## Adding a new feature flag
 
-Three places need an update if you add something:
+Four places need an update if you add something:
 
 1. `CONFIG_KEYS` at the top of `kenoma.py` (key plus type).
-2. The `argparse` block in `main()` with a CLI flag.
-3. The README's Configuration section.
+2. `DEFAULTS` (right below `CONFIG_KEYS`): the default value. Argparse pulls from it, so adding the value here is what makes it the default.
+3. The `argparse` block in `main()` with a CLI flag (use `defaults.get(k, DEFAULTS[k])` for the default).
+4. The README's Configuration section.
 
 The env var version is automatic from `CONFIG_KEYS` (`KENOMA_<KEY>` uppercased), and the config file picks it up too as long as it's in the dict.
 

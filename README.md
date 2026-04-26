@@ -36,7 +36,7 @@ kenoma google/gemma-3n-E4B
 kenoma /path/to/local/model
 ```
 
-The model argument is any HuggingFace model id or a local path. This is meant for base models: Instruction models will load 
+The model argument is any HuggingFace model id or a local path. This is meant for base/completion models — instruction-tuned (`-it`) variants technically load but break character constantly, since they're trained to respond to a turn instead of pretending to be the entire terminal.
 
 ## Configuration
 
@@ -60,16 +60,23 @@ kv_cache = true
 
 The env var for any key is `KENOMA_<KEY>` uppercased, so `KENOMA_MODEL=gpt2 kenoma` works. Config files use stdlib `tomllib` on 3.11+ and the `tomli` backport on 3.9 / 3.10 (pulled in automatically).
 
+Config-file values are typechecked against the expected type and unknown keys are warned about, so typos surface instead of being silently dropped.
+
 Flags:
 
-- `--prompt`: override the captured `PS1`.
+- `--version`: print version and exit.
+- `--prompt`: override the captured `PS1`. Multi-line prompts are not supported and fall back to a constructed `user@host:cwd $ `.
 - `--device {auto,cuda,mps,cpu}`: `auto` resolves to cuda, then mps, then cpu.
 - `--quantize {none,4bit,8bit}`: bitsandbytes quantization. Requires CUDA and the `quantize` extra.
-- `--no-kv-cache`: disable KV cache reuse across turns. 
+- `--no-kv-cache`: disable KV cache reuse across turns. Mostly for debugging; reuse is the default and includes a startup warmup pass through the seeded buffer.
 - `--history N`: seed with the last N commands from shell history (0 disables).
 - `--tmux-lines N`: if inside tmux, seed with the last N lines of pane scrollback (0 disables).
-- `--context-chars N`: cap the rolling buffer at N chars.
+- `--context-chars N`: cap the rolling buffer at N chars. Trim happens at turn boundaries and is line-aligned.
 - `--max-new-tokens N`: per-turn cap on generated tokens.
+
+**Cancelling a turn.** Ctrl-C during generation cancels the current turn, invalidates the KV cache, and redraws the prompt. Ctrl-C at the input prompt exits.
+
+**Bash 4.4+ required for PS1 capture.** macOS ships `/bin/bash` 3.2, which can't expand `${PS1@P}`; users with bash as `$SHELL` will get a one-line warning at startup and a constructed fallback prompt. Pass `--prompt` to override, or use zsh.
 
 ## License
 
