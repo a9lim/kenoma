@@ -1,8 +1,10 @@
 # kenoma
 
 [![CI](https://github.com/a9lim/kenoma/actions/workflows/ci.yml/badge.svg)](https://github.com/a9lim/kenoma/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-%3E%3D3.9-blue)](https://www.python.org/)
-[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](https://www.gnu.org/licenses/agpl-3.0)
+[![PyPI](https://img.shields.io/pypi/v/kenoma)](https://pypi.org/project/kenoma/)
+[![Downloads](https://img.shields.io/pypi/dm/kenoma)](https://pypi.org/project/kenoma/)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://pypi.org/project/kenoma/)
 
 A fake shell powered by raw LLM completion. No chat template, no system prompt. The real shell's `PS1` is captured once at startup and turned into a structural skeleton; the model hallucinates command output until it emits a line matching that skeleton, at which point generation stops and that emitted prompt becomes the new canonical for the next turn.
 
