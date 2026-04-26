@@ -184,26 +184,66 @@ def capture_prompt() -> str:
 
 # ---------------------------------------------------------------------------
 # Stop detection.
+#
+# We build a *structural skeleton* of the captured prompt at startup by taking
+# the rendered prompt verbatim and substituting the cwd (and its `~`-relative
+# form) with `[^\s]+`. The result is a regex that matches the captured prompt
+# and any cwd-drifted variant of it, but not arbitrary shell-prompt-shaped
+# garbage like `50 % done`. This is the *only* stop signal beyond EOS.
+#
+# Skeleton-only matches are strict enough that adoption is safe: when the
+# model emits a matching line, we treat it as the new canonical prompt for
+# both display and stop matching going forward (cwd in the prompt actually
+# tracks the model's fake cd's). See the REPL loop below.
 # ---------------------------------------------------------------------------
 
-PROMPT_LIKE = re.compile(r"\n[^\n]{1,200}[\$#%>] ")
-PROMPT_LIKE_MAX_LINE = 200
+HOLDBACK_LINE_BUDGET = 200  # streaming-flush heuristic, see safe_flush_point
 
 
-def safe_flush_point(produced: str, stop_str: str) -> int:
+def build_skeleton(prompt: str) -> "re.Pattern":
+    """Return a compiled regex that matches the captured prompt with its cwd
+    portion turned into a wildcard. Anchored at \\n. The wildcard is
+    `[^\\s]+`, so cwd substitutions can't bleed across a space (which keeps
+    false positives like `\\n50 % done` from matching).
+
+    Limitations: only the cwd (full path or `~`-relative) is wildcarded.
+    Prompts that show only the cwd basename (bash `\\W`), or that include a
+    git branch / exit-status segment, won't match drifted versions — they'll
+    only match exact reproductions of the captured prompt. Generation in
+    those cases runs to `--max-new-tokens` instead of stopping early."""
+    cwd = os.getcwd()
+    home = os.path.expanduser("~")
+    candidates = [cwd]
+    if cwd == home:
+        candidates.append("~")
+    elif cwd.startswith(home + os.sep):
+        candidates.append("~" + cwd[len(home):])
+    pat = re.escape(prompt)
+    for c in candidates:
+        ec = re.escape(c)
+        if ec and ec in pat:
+            pat = pat.replace(ec, r"[^\s]+", 1)
+            break
+    return re.compile(r"\n" + pat)
+
+
+def safe_flush_point(produced: str, current_prompt: str) -> int:
     """Index up to which `produced` can be flushed to stdout without risking
     that the held-back portion turns into a prompt match on the next token."""
     n = len(produced)
-    # Regex holdback: the latest \n could still anchor a prompt-shaped line
-    # if the chars since it are all non-newline and within the line budget.
+    # Regex holdback: the latest \n could still anchor a skeleton match if
+    # the chars since it are all non-newline and within the line budget.
     regex_safe = n
     last_nl = produced.rfind("\n")
     if last_nl >= 0:
         tail = produced[last_nl + 1:]
-        if "\n" not in tail and len(tail) <= PROMPT_LIKE_MAX_LINE:
+        if "\n" not in tail and len(tail) <= HOLDBACK_LINE_BUDGET:
             regex_safe = last_nl
-    # Exact holdback: longest suffix of produced that's a prefix of stop_str.
+    # Exact holdback: longest suffix of produced that's a prefix of the
+    # current prompt — those chars might complete into a verbatim repro.
+    # Subsumed by the regex holdback in most cases, but cheap insurance.
     exact_safe = n
+    stop_str = current_prompt.rstrip() or current_prompt
     for k in range(min(len(stop_str), n), 0, -1):
         if produced.endswith(stop_str[:k]):
             exact_safe = n - k
@@ -212,29 +252,26 @@ def safe_flush_point(produced: str, stop_str: str) -> int:
 
 
 class StopOnPromptLike(StoppingCriteria):
-    """Stop when the generated tail contains the exact captured prompt OR
-    anything structurally prompt-shaped (newline + line ending in $/#/%/> + space)."""
+    """Stop when the generated tail contains a line matching the prompt
+    skeleton (newline + literal-prefix + cwd-wildcard + literal-suffix)."""
 
-    def __init__(self, tokenizer, exact: str, prompt_len: int):
+    def __init__(self, tokenizer, skeleton: "re.Pattern", prompt_len: int):
         self.tok = tokenizer
-        self.exact = exact
+        self.skeleton = skeleton
         self.prompt_len = prompt_len
 
     def __call__(self, input_ids, scores, **kw) -> bool:
         text = self.tok.decode(input_ids[0][self.prompt_len:], skip_special_tokens=True)
-        if self.exact in text:
-            return True
-        return PROMPT_LIKE.search(text) is not None
+        return self.skeleton.search(text) is not None
 
-    def match_end(self, text: str) -> int:
-        """Return index in `text` where the prompt-like region begins, or -1."""
-        i = text.find(self.exact)
-        if i >= 0:
-            return i
-        m = PROMPT_LIKE.search(text)
-        if m:
-            return m.start() + 1  # skip the leading \n, keep it in body
-        return -1
+    def match_span(self, text: str):
+        """Return (body_end, prompt_end) where text[body_end:prompt_end] is
+        the matched prompt and text[:body_end] is everything before it
+        (including the leading \\n). Returns (-1, -1) if no match."""
+        m = self.skeleton.search(text)
+        if not m:
+            return -1, -1
+        return m.start() + 1, m.end()  # +1 keeps the leading \n in body
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +429,10 @@ def main() -> None:
     args = ap.parse_args()
 
     prompt_tmpl = args.prompt if args.prompt is not None else capture_prompt()
-    stop_str = prompt_tmpl.rstrip() or prompt_tmpl
+    # Skeleton is derived once from the captured prompt's structure; only
+    # `prompt_tmpl` itself drifts (gets reassigned to whatever the model
+    # emits when its output matches the skeleton).
+    skeleton = build_skeleton(prompt_tmpl)
 
     print(f"[loading {args.model} ...]", file=sys.stderr)
     tok, model, device = load_model(args)
@@ -463,7 +503,7 @@ def main() -> None:
         streamer = TextIteratorStreamer(
             tok, skip_prompt=True, skip_special_tokens=True
         )
-        stopper = StopOnPromptLike(tok, stop_str, prompt_len)
+        stopper = StopOnPromptLike(tok, skeleton, prompt_len)
         stopping = StoppingCriteriaList([stopper])
         gen_kwargs = dict(
             input_ids=input_ids,
@@ -497,14 +537,14 @@ def main() -> None:
         try:
             for chunk in streamer:
                 produced += chunk
-                idx = stopper.match_end(produced)
-                if idx >= 0:
-                    if idx > shown:
-                        sys.stdout.write(produced[shown:idx])
+                body_end, _ = stopper.match_span(produced)
+                if body_end >= 0:
+                    if body_end > shown:
+                        sys.stdout.write(produced[shown:body_end])
                         sys.stdout.flush()
-                    shown = idx
+                    shown = body_end
                     break
-                safe_upto = safe_flush_point(produced, stop_str)
+                safe_upto = safe_flush_point(produced, prompt_tmpl)
                 if safe_upto > shown:
                     sys.stdout.write(produced[shown:safe_upto])
                     sys.stdout.flush()
@@ -521,9 +561,15 @@ def main() -> None:
             sys.stdout.flush()
             continue
 
-        idx = stopper.match_end(produced)
-        if idx >= 0:
-            body = produced[:idx]
+        body_end, prompt_end = stopper.match_span(produced)
+        if body_end >= 0:
+            body = produced[:body_end]
+            # Adopt the model's emitted prompt as the new canonical. By
+            # construction (skeleton match) it has the same structure as the
+            # original captured prompt, just with whatever cwd the model
+            # decided to put there. This keeps the fake terminal internally
+            # consistent across `cd`s.
+            prompt_tmpl = produced[body_end:prompt_end]
         else:
             body = produced
             sys.stdout.write(produced[shown:])
