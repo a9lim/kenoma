@@ -3,7 +3,7 @@
 [![CI](https://github.com/a9lim/kenoma/actions/workflows/ci.yml/badge.svg)](https://github.com/a9lim/kenoma/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/kenoma)](https://pypi.org/project/kenoma/)
 [![Downloads](https://img.shields.io/pypi/dm/kenoma)](https://pypi.org/project/kenoma/)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://pypi.org/project/kenoma/)
 
 A shell powered by LLM completion.
@@ -78,4 +78,4 @@ Flags:
 
 ## License
 
-AGPL-3.0-or-later. See `LICENSE`.
+GPL-3.0-or-later. See `LICENSE`.

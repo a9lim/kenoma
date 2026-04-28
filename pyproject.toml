@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "kenoma"
 dynamic = ["version"]
-description = "A fake shell powered by raw LLM completion. The model hallucinates command output until it emits the next prompt."
+description = "A shell powered by LLM completion"
 readme = "README.md"
 requires-python = ">=3.9"
-license = "AGPL-3.0-or-later"
+license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [
     { name = "a9lim", email = "mx@a9l.im" },
