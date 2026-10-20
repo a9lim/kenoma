@@ -3,4 +3,4 @@
 # otherwise make it into the sdist tarball.
 include CONTRIBUTING.md
 include SECURITY.md
-include CLAUDE.md
+include AGENTS.md
