@@ -15,32 +15,23 @@ Only the latest release on PyPI has security fixes. If you're on an older versio
 
 ## What kenoma does at startup
 
-A few things kenoma does may touch your real environment, even though no command you type is actually executed:
+No command you type is executed. A few things at startup do touch your real environment:
 
-- **Interactive shell spawns** (`$SHELL -i -c ...`) once, to expand `PS1`. This runs your shell's RC files (`.zshrc`, `.bashrc`, plugins, etc.) as opening a new terminal does.
-- **Shell history files read** (`$HISTFILE` or `~/.zsh_history` or `~/.bash_history`) fills the buffer with the last N commands as context for the model. The history is given to the model but is not echoed back to your screen.
-- **Captures the current tmux pane scrollback** if `$TMUX` is set, via `tmux capture-pane`. This includes recent commands and their real outputs, and gets given to the model as context.
+- **Spawns an interactive shell** (`$SHELL -i -c ...`) once to render `PS1`. This runs your shell's RC files (`.zshrc`, `.bashrc`, plugins) as opening a new terminal does, and runs your prompt hooks (zsh `precmd`, bash `PROMPT_COMMAND`) so themes that build the prompt there render.
+- **Reads your shell history** (`$HISTFILE`, `~/.zsh_history` or `~/.bash_history`). The last `--history` commands become part of the model's context (shown to it as the output of `history`); all of it feeds arrow-key recall.
+- **Captures the current tmux pane** if `$TMUX` is set, via `tmux capture-pane`: recent commands and their real outputs, given to the model as context.
+- **Runs `git rev-parse --abbrev-ref HEAD`** in the current directory to find a branch name in your prompt.
 
-If you don't want this, please pass `--history 0`, `--tmux-lines 0`, or `--prompt '...'` to disable them. The model runs against whatever is in its context, so don't give it anything you don't want it to see.
+To avoid these, pass `--history 0`, `--tmux-lines 0`, or `--prompt '...'`. The model sees whatever is in its context, so don't give it anything you don't want it to see.
 
-## Adopted prompts are gated
+## With `--url`, your context leaves the machine
 
-The model can emit prompt-shaped output during a turn, and we adopt that as the new canonical `prompt_tmpl` (to track fake `cd`s). This is gated by an `adoptable()` check:
+The remote engine sends the whole transcript (seed included: scrollback or history, plus everything you type) to the server you name. Only point it at servers you trust with that.
 
-- Length capped at 512 chars.
-- No control bytes (ANSI escapes, etc.) except `\t`.
-- No embedded newlines.
-- The wildcarded cwd portion has to be path-shaped (no shell metachars like `;`, `|`, `&`).
+## Model output is sanitized
 
-When the gate rejects, we keep the previous prompt and drop the model's emitted span silently. This prevents the model from poisoning the displayed prompt with arbitrary terminal escapes.
-
-## What kenoma does not do
-
-- Execute anything; nothing touches your real filesystem.
-- Sandbox the loaded model.
+Model output goes to your real terminal, so control bytes are dropped before display: C0 and C1 controls, ESC (and with it every escape sequence) and carriage returns. Tab and newline are kept. The prompt kenoma draws is your own rendered PS1 with only its SGR color codes kept; a prompt the model wrote that doesn't fit your template is shown as plain text.
 
 ## Model and checkpoint trust
 
-Kenoma loads HuggingFace checkpoints via `transformers`, which executes code from the checkpoint repo in some cases. Kenoma does not set `trust_remote_code=True`, but if you pass a model that requires it, please be aware that you are executing arbitrary code from that repo. Please only load models from publishers you trust.
-
-The base and completion models that kenoma is meant for (Qwen base, Gemma base, Llama base, GPT-2, Pythia) do not require `trust_remote_code`.
+The local engine loads checkpoints with mlx-lm, which does not execute code from the repository (no `trust_remote_code`). Weights from an untrusted publisher can still produce any text, which kenoma only ever displays.

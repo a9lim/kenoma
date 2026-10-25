@@ -8,10 +8,9 @@
 
 ## Test plan
 
-- [ ] `ruff check .` passes
-- [ ] `pyright` passes
-- [ ] Manual session against a small base model (e.g. `Qwen/Qwen2.5-0.5B`) still streams line by line, stops on a prompt-shaped line, and exits cleanly on Ctrl-D
-- [ ] If you touched the skeleton, holdback, or KV cache: please note which model and shell you tested against
+- [ ] `pytest`, `ruff check .` and `pyright` pass
+- [ ] Manual session against a base model (e.g. `Qwen/Qwen3.5-2B-Base`): output streams, a fake `cd` changes the prompt, Alt-r / Alt-↑ / Alt-t work, Ctrl-D exits
+- [ ] If you touched the template, recognizer or engine cache: please note which model and shell you tested against
 
 ## Notes
 

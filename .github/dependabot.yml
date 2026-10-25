@@ -11,10 +11,3 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    ignore:
-      # torch / transformers have tight version coupling and large binaries;
-      # bump these deliberately, not weekly
-      - dependency-name: "torch"
-      - dependency-name: "transformers"
-      - dependency-name: "accelerate"
-      - dependency-name: "bitsandbytes"
