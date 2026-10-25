@@ -20,6 +20,7 @@ import contextlib
 import io
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator, Sequence
@@ -319,6 +320,11 @@ class RemoteEngine:
     """Streams raw completions from an OpenAI-compatible server."""
 
     tokenized = False
+    # An interactive stream (read while the user types) must never hold the
+    # prompt: each read gives up after INTERACTIVE_READ seconds of silence,
+    # and the whole stream ends INTERACTIVE_DEADLINE seconds after it began.
+    INTERACTIVE_READ = 1.0
+    INTERACTIVE_DEADLINE = 5.0
 
     def __init__(self, url: str, model: str | None, temperature: float, top_p: float,
                  api_key: str | None = None):
@@ -355,23 +361,29 @@ class RemoteEngine:
                 "max_tokens": max_tokens, "stream": True, **self.params}
         req = urllib.request.Request(self.base + "/completions", data=json.dumps(body).encode(),
                                      headers=self.headers)
+        deadline = time.monotonic() + self.INTERACTIVE_DEADLINE
         try:
-            # A guess read while the user types gives up quickly; a turn waits.
-            resp = urllib.request.urlopen(req, timeout=2 if interactive else 120)
+            resp = urllib.request.urlopen(req, timeout=self.INTERACTIVE_READ if interactive else 120)
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"{e.code} from {self.base}: {e.read().decode(errors='replace')[:300]}") from e
         with resp:
             for raw in resp:
                 line = raw.strip()
                 if not line.startswith(b"data:"):
+                    if interactive:
+                        if time.monotonic() > deadline:
+                            return
+                        yield "", None  # keepalives and blank lines still hand back control
                     continue
                 data = line[5:].strip()
                 if data == b"[DONE]":
                     return
                 choices = json.loads(data).get("choices") or [{}]
                 text = choices[0].get("text") or ""
-                if text:
+                if text or interactive:
                     yield text, None
+                if interactive and time.monotonic() > deadline:
+                    return
 
 
 def make_engine(model: str, url: str | None, temperature: float, top_p: float,

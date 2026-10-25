@@ -192,6 +192,12 @@ def test_window_depends_only_on_the_path():
     assert s.window(nodes[3]) == before
 
 
+def test_seed_trim_keeps_a_line_that_fits_exactly():
+    s = make(FakeEngine())
+    assert s._fit("old\nnew\n", 4) == "new\n"
+    assert s._fit("abc", 2) == ""
+
+
 def test_seed_is_trimmed_to_its_newest_lines():
     s = make(FakeEngine(), seed="".join(f"line {i}\n" for i in range(100)), budget=200)
     assert len(s.root.tokens or []) <= s._limit() // 2

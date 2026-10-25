@@ -77,8 +77,13 @@ class Session:
             cost = self._text_cost(seed)
             if cost <= limit:
                 break
-            cut = seed.find("\n", int(len(seed) * (1 - limit / cost)))
-            seed = seed[cut + 1:] if cut >= 0 else ""
+            # Estimate where to cut, then move to the next line start (an
+            # estimate already at one stays put).
+            cut = max(1, int(len(seed) * (1 - limit / cost)))
+            if seed[cut - 1] != "\n":
+                nl = seed.find("\n", cut)
+                cut = nl + 1 if nl >= 0 else len(seed)
+            seed = seed[cut:]
         return seed
 
     # -- context ------------------------------------------------------------
@@ -252,8 +257,9 @@ class Session:
                                      GHOST_MAX_TOKENS, interactive=True)
             raw = ""
         guess = ""
+        pieces = 0
         try:
-            for _ in range(GHOST_MAX_TOKENS):
+            while pieces < GHOST_MAX_TOKENS:
                 if "\n" in raw or len(raw) > GHOST_MAX_CHARS:
                     break
                 if len(raw) >= len(trail):
@@ -267,6 +273,7 @@ class Session:
                     piece, _ = next(gen)
                 except StopIteration:
                     break
+                pieces += bool(piece)  # empty pieces are just the engine handing back control
                 raw += piece
             guess = raw[len(trail):].split("\n", 1)[0][:GHOST_MAX_CHARS] if raw.startswith(trail) else ""
             node.ghost = guess

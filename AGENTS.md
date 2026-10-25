@@ -160,8 +160,9 @@ asyncio.sleep(0)` after each: single-threaded, keystrokes at most a token
 behind (plus the initial rewind of a restarted guess), and the engine is
 never used from two places. prompt_toolkit cancels and awaits the task when
 the prompt exits, before the next turn touches the engine. A remote
-interactive request gives up after 2 s so a stalled server can't freeze the
-prompt.
+interactive stream yields on every SSE line, keepalives included, gives up
+on a read after 1 s of silence, and ends 5 s after it began, so a slow or
+chatty server can delay keystrokes by at most one read.
 
 ## UI
 
