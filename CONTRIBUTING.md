@@ -10,49 +10,51 @@ cd kenoma
 pip install -e ".[dev]"
 ```
 
-The `dev` extra pulls in ruff, pyright, build, and twine. The `quantize` extra pulls bitsandbytes if you want to try the 4bit or 8bit paths (CUDA only).
+The `dev` extra pulls in pytest, ruff, pyright, build, and twine. The local engine needs Apple silicon (mlx-lm); on other machines, run any OpenAI-compatible completion server and pass `--url`.
 
-## Lint and typecheck
+[AGENTS.md](AGENTS.md) is the design doc: how the prompt template, the recognizer, the transcript and the engine caches fit together.
 
-CI runs `ruff check .` and `pyright` on every PR. Please run them locally first:
+## Tests, lint, typecheck
+
+CI runs all three on every PR. Please run them locally first:
 
 ```bash
+pytest
 ruff check .
-ruff check . --fix    # auto-fix what's fixable
 pyright
 ```
 
-Pyright is scoped to `kenoma.py` and runs in standard mode; the warnings from torch and transformers are downgraded so the only errors that appear are real.
+The tests need no model: `FakeEngine` in `tests/test_session.py` scripts token streams, so turns, leftover handling, ghost text and interrupts are covered without weights.
 
 ## Manual testing
 
-There is no automated test suite yet because kenoma is a wrapper around `model.generate()` and the meaningful behavior is in the streaming and stop-detection which is hard to unit-test without a real model. If you touch anything, please run a manual session and confirm:
+If you touch anything user-facing, please run a session and confirm:
 
-1. The prompt streams line by line, not in big bursts.
-2. Generation stops on a prompt-shaped line and adopts it (try a fake `cd /tmp` and check the next prompt's cwd).
-3. Ctrl-D and Ctrl-C at the input prompt both exit cleanly.
+1. Output streams as it's generated, and a command with no output gets its prompt back immediately.
+2. A fake `cd` changes the prompt's cwd.
+3. Alt-r re-rolls, Alt-↑ steps back (typing there branches), Alt-t opens the tree, Ctrl-C interrupts, Ctrl-D exits.
 
 ```bash
-kenoma Qwen/Qwen2.5-0.5B
+kenoma Qwen/Qwen3.5-2B-Base
 ```
 
-is small enough to run on CPU for a smoke test.
+is quick to load. If you changed the engine's cache handling, check that next-token logits after a rewind match a fresh prefill on a Qwen3.5 model (recurrent layers) and an attention-only one.
 
-## Adding a new feature flag
+## Adding a new setting
 
-Four places need an update if you add something:
+Four places need an update:
 
-1. `CONFIG_KEYS` at the top of `kenoma.py` (key plus type).
-2. `DEFAULTS` (right below `CONFIG_KEYS`): the default value. Argparse pulls from it, so adding the value here is what makes it the default.
-3. The `argparse` block in `main()` with a CLI flag (use `defaults.get(k, DEFAULTS[k])` for the default).
+1. `CONFIG_KEYS` in `kenoma/cli.py` (key plus type).
+2. `DEFAULTS` right below it: the default value. Argparse pulls from it.
+3. The argparse block in `parse_args()` (use `d["key"]` for the default).
 4. The README's Configuration section.
 
-The env var version is automatic from `CONFIG_KEYS` (`KENOMA_<KEY>` uppercased), and the config file picks it up too as long as it's in the dict.
+The env var (`KENOMA_<KEY>` uppercased) and the config file pick it up automatically.
 
 ## PRs
 
 - Please don't bump the version in your PR unless you want a new release; the PyPI publish workflow is triggered by a version update on `main`.
-- If you add a flag, please mention which model you tested it against in the PR description.
+- If you add a setting, please mention which model you tested it against in the PR description.
 - Small PRs are easier to review than big ones. If you're unsure, please open an issue first so we can sketch it together.
 
 ## Questions

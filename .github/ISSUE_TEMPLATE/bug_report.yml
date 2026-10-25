@@ -14,29 +14,33 @@ body:
     id: model
     attributes:
       label: Model ID
-      description: HuggingFace model id or local path (e.g. `Qwen/Qwen2.5-0.5B`)
-      placeholder: Qwen/Qwen2.5-0.5B
+      description: HuggingFace model id or local path (e.g. `Qwen/Qwen3.5-4B-Base`)
+      placeholder: Qwen/Qwen3.5-4B-Base
     validations:
       required: true
 
   - type: dropdown
-    id: device
+    id: engine
     attributes:
-      label: Device
+      label: Engine
       options:
-        - cuda
-        - mps
-        - cpu
-        - auto
+        - local (MLX)
+        - server (--url)
     validations:
       required: true
+
+  - type: input
+    id: server
+    attributes:
+      label: Server
+      description: With --url, which server and version (vLLM, SGLang, llama-server, mlx_lm.server)
 
   - type: input
     id: kenoma-version
     attributes:
       label: kenoma version
       description: Output of `pip show kenoma | grep Version`
-      placeholder: 0.1.0
+      placeholder: 2.0.0
     validations:
       required: true
 

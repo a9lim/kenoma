@@ -7,7 +7,7 @@ name = "kenoma"
 dynamic = ["version"]
 description = "A shell powered by LLM completion"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [
@@ -19,8 +19,9 @@ keywords = [
     "shell",
     "hallucination",
     "completion",
-    "transformers",
-    "huggingface",
+    "mlx",
+    "vllm",
+    "loom",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -30,8 +31,6 @@ classifiers = [
     "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -41,18 +40,15 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "torch",
-    "transformers>=4.44",
-    "accelerate",
-    "sentencepiece",
-    "tomli>=1.1.0; python_version < '3.11'",
+    "prompt_toolkit>=3.0.40",
+    # The local engine. Elsewhere, kenoma talks to an OpenAI-compatible
+    # server (--url) and needs nothing else.
+    "mlx-lm>=0.30; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [project.optional-dependencies]
-# bitsandbytes has no official macOS or Windows wheels, so the marker keeps
-# `pip install kenoma[quantize]` from blowing up off-Linux.
-quantize = ["bitsandbytes; platform_system == 'Linux'"]
 dev = [
+    "pytest>=8",
     "ruff>=0.6.9",
     "pyright>=1.1.400",
     "build>=1.0",
@@ -60,7 +56,7 @@ dev = [
 ]
 
 [project.scripts]
-kenoma = "kenoma:main"
+kenoma = "kenoma.cli:main"
 
 # URL labels here are the ones PyPI's sidebar specifically renders with
 # icons (Source, Issues, Changelog, Documentation, Funding); other labels
@@ -73,36 +69,29 @@ Changelog     = "https://github.com/a9lim/kenoma/releases"
 Documentation = "https://github.com/a9lim/kenoma#readme"
 
 [tool.setuptools]
-py-modules = ["kenoma"]
+packages = ["kenoma"]
 
 [tool.setuptools.dynamic]
-# Single source of truth: ``__version__`` in kenoma.py. Setuptools AST-reads
-# the assignment so the heavy torch/transformers imports never run at build.
+# Single source of truth: ``__version__`` in kenoma/__init__.py, which
+# setuptools reads without importing the package.
 version = { attr = "kenoma.__version__" }
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W"]
-# E501 (line too long): kenoma.py has long help strings and module docstrings
-# we don't want to break.  E741 (ambiguous variable name) and E731 (lambda
-# assignment): conventional in tight scripting.  E402 (module level import
-# not at top): we deliberately gate `tomllib` import behind a try/except,
-# and bitsandbytes is imported lazily inside `build_quant_config`.
-ignore = ["E501", "E741", "E402", "E731"]
+# E501: long help strings and docstrings read better unbroken.
+ignore = ["E501"]
 
-# Pyright — scoped to the single module that is the public API surface.
-# ``standard`` mode (rather than ``strict``) is deliberate: torch /
-# transformers stubs are partial and ``strict`` fires constantly on
-# legitimate ``Tensor`` calls.  We escalate the rules that actually catch
-# bugs (missing parameter / type-arg, attribute access, argument / call /
-# return / assignment) to error.
+# ``standard`` mode with the rules that catch real bugs escalated to error.
+# mlx-lm is imported lazily inside MLXEngine and is absent on Linux CI, so
+# missing imports are only warnings.
 [tool.pyright]
-include = ["kenoma.py"]
+include = ["kenoma", "tests"]
 exclude = ["**/__pycache__"]
-pythonVersion = "3.9"
+pythonVersion = "3.11"
 typeCheckingMode = "standard"
 reportMissingTypeStubs = false
 reportMissingImports = "warning"
@@ -114,9 +103,6 @@ reportCallIssue = "error"
 reportReturnType = "error"
 reportAssignmentType = "error"
 reportUnnecessaryIsInstance = "warning"
-# torch and transformers re-export many symbols (torch.dtype,
-# torch.float16, torch.tensor, etc.) but their stubs don't list them in
-# __all__.  Newer pyright flags these as private-import use even though
-# they're the long-standing public API.  Disabled here because every
-# instance is a false positive on third-party stubs.
-reportPrivateImportUsage = "none"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
